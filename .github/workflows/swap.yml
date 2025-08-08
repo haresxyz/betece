@@ -1,4 +1,4 @@
-name: Swap (Optimism)
+name: Swap
 
 on:
   workflow_dispatch: {}    # can be run manually from Actions tab
