@@ -1,4 +1,4 @@
-name: Odos One-Time Swap (Optimism)
+name: Swap (Optimism)
 
 on:
   workflow_dispatch: {}    # can be run manually from Actions tab
