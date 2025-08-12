@@ -1,17 +1,17 @@
 name: Swap
 
 on:
-  workflow_dispatch: {}    # Can be run manually from the Actions tab
+  workflow_dispatch: {}          # Manual run from Actions tab
   schedule:
-    - cron: "5 6 * * *"    # Runs daily at 06:05 UTC (except Friday will have its own earlier run)
-    - cron: "0 6 * * 5"    # Runs every Friday at 06:00 UTC
+    - cron: "5 6 * * 0-4,6"      # 06:05 UTC on Sun–Thu & Sat
+    - cron: "0 6 * * 5"          # 06:00 UTC on Friday
 
 jobs:
   run-swap:
     runs-on: ubuntu-latest
     concurrency:
       group: odos-swap
-      cancel-in-progress: false   # Ensures a previous run won't be cancelled if a new one starts
+      cancel-in-progress: false  # Do not cancel an ongoing run
 
     steps:
       - name: Checkout repository
@@ -22,20 +22,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install dependencies (locked versions)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install web3==6.20.1 python-dotenv==1.0.1 requests==2.32.3
 
       - name: Run bot.py
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
-          AMOUNT_IN: ${{ secrets.AMOUNT_IN }}
           TOKEN_IN: ${{ secrets.TOKEN_IN }}
           TOKEN_OUT: ${{ secrets.TOKEN_OUT }}
           SLIPPAGE_PERCENT: ${{ secrets.SLIPPAGE_PERCENT }}
+          AMOUNT_IN: ${{ secrets.AMOUNT_IN }}
           SEND_TO: ${{ secrets.SEND_TO }}
+          # AMOUNT_IN_FRIDAY stays hidden; only used if present in Secrets
         run: |
           python bot.py
