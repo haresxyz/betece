@@ -1,16 +1,17 @@
 name: Swap
 
 on:
-  workflow_dispatch: {}    # can be run manually from Actions tab
+  workflow_dispatch: {}    # Can be run manually from the Actions tab
   schedule:
-    - cron: "0 6 * * 5"    # automatically runs every Friday at 06:00 UTC
+    - cron: "5 6 * * *"    # Runs daily at 06:05 UTC (except Friday will have its own earlier run)
+    - cron: "0 6 * * 5"    # Runs every Friday at 06:00 UTC
 
 jobs:
   run-swap:
     runs-on: ubuntu-latest
     concurrency:
       group: odos-swap
-      cancel-in-progress: false
+      cancel-in-progress: false   # Ensures a previous run won't be cancelled if a new one starts
 
     steps:
       - name: Checkout repository
