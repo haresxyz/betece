@@ -2,7 +2,7 @@ import os, math, json, requests
 from decimal import Decimal, ROUND_DOWN
 from dotenv import load_dotenv
 from web3 import Web3
-from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware
+from web3.middleware import ExtraDataToPOAMiddleware  # <- v6 import path
 from datetime import datetime
 
 CHAIN_ID = 10  # Optimism
@@ -122,14 +122,16 @@ def main():
     if r.status_code != 200:
         r2 = odos_quote(CHAIN_ID, WALLET, TOKEN_IN_ADDR, amount_in_wei, TOKEN_OUT_ADDR, SLIPPAGE_PCT, include_user=False)
         if r2.status_code != 200:
-            raise SystemExit(f"❌ Odos quote failed: {r.status_code} {r.text} / {r2.status_code} {r2.text}")
+            raise SystemExit(f"❌ Odos quote failed: {r.status_code} {r2.status_code} | {r.text} / {r2.text}")
         quote = r2.json()
         print("ℹ️ Odos quote succeeded without userAddr (fallback).")
     else:
         quote = r.json()
 
-    path_id = quote["pathId"]
+    path_id = quote.get("pathId")
     est_out = quote.get("outputTokens", [{}])[0].get("amount")
+    if not path_id:
+        raise SystemExit("❌ Invalid quote from Odos (no pathId).")
 
     # === Approve if needed ===
     allowance = token_in.functions.allowance(WALLET, router).call()
@@ -140,7 +142,8 @@ def main():
             "chainId": CHAIN_ID,
             "from": WALLET,
             "nonce": nonce,
-            "gasPrice": w3.eth.gas_price
+            "maxFeePerGas": w3.eth.gas_price,
+            "maxPriorityFeePerGas": 0
         })
         try:
             approve_tx["gas"] = math.ceil(w3.eth.estimate_gas(approve_tx) * 1.2)
@@ -167,7 +170,8 @@ def main():
         "data": data,
         "value": value,
         "nonce": nonce,
-        "gasPrice": w3.eth.gas_price
+        "maxFeePerGas": w3.eth.gas_price,
+        "maxPriorityFeePerGas": 0
     }
     try:
         swap_tx["gas"] = math.ceil(w3.eth.estimate_gas(swap_tx) * 1.2)
@@ -199,7 +203,8 @@ def main():
                 "chainId": CHAIN_ID,
                 "from": WALLET,
                 "nonce": nonce,
-                "gasPrice": w3.eth.gas_price
+                "maxFeePerGas": w3.eth.gas_price,
+                "maxPriorityFeePerGas": 0
             })
             try:
                 tx2["gas"] = math.ceil(w3.eth.estimate_gas(tx2) * 1.2)
