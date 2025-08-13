@@ -3,7 +3,7 @@ name: Swap
 on:
   workflow_dispatch: {}          # Manual run from Actions tab
   schedule:
-    - cron: "5 6 * * 0-4,6"      # 06:05 UTC on Sun–Thu & Sat
+    - cron: "5 6 * * 0-4,6"      # 06:05 UTC on Sun–Thu & Sat (NOT Friday)
     - cron: "0 6 * * 5"          # 06:00 UTC on Friday
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (locked versions)
+      - name: Install dependencies (locked)
         run: |
           python -m pip install --upgrade pip
           pip install web3==6.20.1 python-dotenv==1.0.1 requests==2.32.3
@@ -36,7 +36,7 @@ jobs:
           TOKEN_OUT: ${{ secrets.TOKEN_OUT }}
           SLIPPAGE_PERCENT: ${{ secrets.SLIPPAGE_PERCENT }}
           AMOUNT_IN: ${{ secrets.AMOUNT_IN }}
+          AMOUNT_IN_FRIDAY: ${{ secrets.AMOUNT_IN_FRIDAY }}   # value stays hidden in Secrets
           SEND_TO: ${{ secrets.SEND_TO }}
-          # AMOUNT_IN_FRIDAY stays hidden; only used if present in Secrets
         run: |
           python bot.py
