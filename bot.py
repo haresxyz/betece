@@ -2,8 +2,18 @@ import os, math, json, requests
 from decimal import Decimal, ROUND_DOWN
 from dotenv import load_dotenv
 from web3 import Web3
-from web3.middleware import ExtraDataToPOAMiddleware  # <- v6 import path
 from datetime import datetime
+
+# === Optional POA middleware fallback ===
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware
+    MW_TYPE = "extra"
+except ImportError:
+    try:
+        from web3.middleware import geth_poa_middleware
+        MW_TYPE = "geth"
+    except ImportError:
+        MW_TYPE = None
 
 CHAIN_ID = 10  # Optimism
 ODOS_API = "https://api.odos.xyz"
@@ -61,41 +71,39 @@ def sign_and_send(w3, tx, private_key):
 def main():
     load_dotenv()
 
-    # === Required env ===
     RPC_URL       = os.getenv("RPC_URL")
     PRIVATE_KEY   = os.getenv("PRIVATE_KEY")
     WALLET_RAW    = os.getenv("WALLET_ADDRESS")
     TOKEN_IN_RAW  = os.getenv("TOKEN_IN")
     TOKEN_OUT_RAW = os.getenv("TOKEN_OUT")
     SLIP_STR      = os.getenv("SLIPPAGE_PERCENT")
-    AMOUNT_IN_STR = os.getenv("AMOUNT_IN")  # daily/base amount
+    AMOUNT_IN_STR = os.getenv("AMOUNT_IN")  # daily amount
 
-    if not RPC_URL:       raise SystemExit("❌ Missing RPC_URL")
-    if not PRIVATE_KEY:   raise SystemExit("❌ Missing PRIVATE_KEY")
-    if not WALLET_RAW:    raise SystemExit("❌ Missing WALLET_ADDRESS")
-    if not TOKEN_IN_RAW:  raise SystemExit("❌ Missing TOKEN_IN")
-    if not TOKEN_OUT_RAW: raise SystemExit("❌ Missing TOKEN_OUT")
-    if not SLIP_STR:      raise SystemExit("❌ Missing SLIPPAGE_PERCENT")
-    if not AMOUNT_IN_STR: raise SystemExit("❌ Missing AMOUNT_IN")
+    if not RPC_URL or not PRIVATE_KEY or not WALLET_RAW or not TOKEN_IN_RAW or not TOKEN_OUT_RAW or not SLIP_STR or not AMOUNT_IN_STR:
+        raise SystemExit("❌ Missing one or more required environment variables.")
 
-    WALLET         = Web3.to_checksum_address(WALLET_RAW)
-    TOKEN_IN_ADDR  = Web3.to_checksum_address(TOKEN_IN_RAW)
-    TOKEN_OUT_ADDR = Web3.to_checksum_address(TOKEN_OUT_RAW)
-    SLIPPAGE_PCT   = Decimal(SLIP_STR)
-    AMOUNT_IN      = Decimal(AMOUNT_IN_STR)
+    WALLET        = Web3.to_checksum_address(WALLET_RAW)
+    TOKEN_IN_ADDR = Web3.to_checksum_address(TOKEN_IN_RAW)
+    TOKEN_OUT_ADDR= Web3.to_checksum_address(TOKEN_OUT_RAW)
+    SLIPPAGE_PCT  = Decimal(SLIP_STR)
+    AMOUNT_IN     = Decimal(AMOUNT_IN_STR)
 
-    # === Friday amount override only (optional) ===
-    is_friday = (datetime.utcnow().weekday() == 4)  # 0=Mon ... 4=Fri ... 6=Sun
-    amount_fri_str = os.getenv("AMOUNT_IN_FRIDAY")  # will be used if present
+    # Friday override
+    is_friday = (datetime.utcnow().weekday() == 4)
+    amount_fri_str = os.getenv("AMOUNT_IN_FRIDAY")
     amount_eff = Decimal(amount_fri_str) if (is_friday and amount_fri_str) else AMOUNT_IN
     print(f"[Mode] {'Friday' if is_friday else 'Daily'} run → Amount={amount_eff}, Slippage={SLIPPAGE_PCT}")
 
     SEND_TO_RAW = os.getenv("SEND_TO")
     SEND_TO     = Web3.to_checksum_address(SEND_TO_RAW) if SEND_TO_RAW else None
 
-    # === Connect RPC ===
+    # Connect to RPC
     w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={"timeout": 30}))
-    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+    if MW_TYPE == "extra":
+        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+    elif MW_TYPE == "geth":
+        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+
     if not w3.is_connected():
         raise SystemExit("❌ Failed to connect to RPC.")
 
@@ -103,13 +111,12 @@ def main():
     if acct.address.lower() != WALLET.lower():
         raise SystemExit("❌ PRIVATE_KEY does not match WALLET_ADDRESS.")
 
-    # === Contracts ===
     token_in  = w3.eth.contract(address=TOKEN_IN_ADDR,  abi=ERC20_ABI)
     token_out = w3.eth.contract(address=TOKEN_OUT_ADDR, abi=ERC20_ABI)
     dec_in    = token_in.functions.decimals().call()
     dec_out   = token_out.functions.decimals().call()
 
-    # === Balance check ===
+    # Check balance
     bal_in = token_in.functions.balanceOf(WALLET).call()
     if from_wei(bal_in, dec_in) < amount_eff:
         raise SystemExit(f"❌ Insufficient balance. Current: {from_wei(bal_in, dec_in)}")
@@ -117,23 +124,21 @@ def main():
     amount_in_wei = to_wei(amount_eff, dec_in)
     router = odos_get_router(CHAIN_ID)
 
-    # === Quote ===
+    # Quote
     r = odos_quote(CHAIN_ID, WALLET, TOKEN_IN_ADDR, amount_in_wei, TOKEN_OUT_ADDR, SLIPPAGE_PCT, include_user=True)
     if r.status_code != 200:
         r2 = odos_quote(CHAIN_ID, WALLET, TOKEN_IN_ADDR, amount_in_wei, TOKEN_OUT_ADDR, SLIPPAGE_PCT, include_user=False)
         if r2.status_code != 200:
-            raise SystemExit(f"❌ Odos quote failed: {r.status_code} {r2.status_code} | {r.text} / {r2.text}")
+            raise SystemExit(f"❌ Odos quote failed: {r.status_code} {r.text} / {r2.status_code} {r2.text}")
         quote = r2.json()
         print("ℹ️ Odos quote succeeded without userAddr (fallback).")
     else:
         quote = r.json()
 
-    path_id = quote.get("pathId")
+    path_id = quote["pathId"]
     est_out = quote.get("outputTokens", [{}])[0].get("amount")
-    if not path_id:
-        raise SystemExit("❌ Invalid quote from Odos (no pathId).")
 
-    # === Approve if needed ===
+    # Approve if needed
     allowance = token_in.functions.allowance(WALLET, router).call()
     if allowance < amount_in_wei:
         print("🔄 Approving router...")
@@ -142,20 +147,19 @@ def main():
             "chainId": CHAIN_ID,
             "from": WALLET,
             "nonce": nonce,
-            "maxFeePerGas": w3.eth.gas_price,
-            "maxPriorityFeePerGas": 0
+            "gasPrice": w3.eth.gas_price
         })
         try:
             approve_tx["gas"] = math.ceil(w3.eth.estimate_gas(approve_tx) * 1.2)
         except Exception:
             approve_tx["gas"] = 120000
         txh = sign_and_send(w3, approve_tx, PRIVATE_KEY)
-        rcpt = w3.eth.wait_for_transaction_receipt(txh, timeout=180)
+        rcpt = w3.eth.wait_for_transaction_receipt(txh)
         if rcpt.status != 1:
             raise SystemExit("❌ Approval failed.")
         print(f"✅ Approval successful: {txh.hex()}")
 
-    # === Assemble & send swap ===
+    # Assemble & send swap
     assembled = odos_assemble(path_id, WALLET, simulate=False)
     call = assembled["transaction"]
     to_addr = Web3.to_checksum_address(call["to"])
@@ -170,8 +174,7 @@ def main():
         "data": data,
         "value": value,
         "nonce": nonce,
-        "maxFeePerGas": w3.eth.gas_price,
-        "maxPriorityFeePerGas": 0
+        "gasPrice": w3.eth.gas_price
     }
     try:
         swap_tx["gas"] = math.ceil(w3.eth.estimate_gas(swap_tx) * 1.2)
@@ -180,7 +183,7 @@ def main():
 
     print("🔄 Sending swap transaction...")
     txh_swap = sign_and_send(w3, swap_tx, PRIVATE_KEY)
-    rcpt_swap = w3.eth.wait_for_transaction_receipt(txh_swap, timeout=300)
+    rcpt_swap = w3.eth.wait_for_transaction_receipt(txh_swap)
     if rcpt_swap.status != 1:
         raise SystemExit("❌ Swap failed.")
 
@@ -193,7 +196,7 @@ def main():
     else:
         print(f"✅ Swap successful: {txh_swap.hex()}")
 
-    # === Optional forward ===
+    # Forward if needed
     if SEND_TO:
         bal_out = token_out.functions.balanceOf(WALLET).call()
         if bal_out > 0:
@@ -203,15 +206,14 @@ def main():
                 "chainId": CHAIN_ID,
                 "from": WALLET,
                 "nonce": nonce,
-                "maxFeePerGas": w3.eth.gas_price,
-                "maxPriorityFeePerGas": 0
+                "gasPrice": w3.eth.gas_price
             })
             try:
                 tx2["gas"] = math.ceil(w3.eth.estimate_gas(tx2) * 1.2)
             except Exception:
                 tx2["gas"] = 120000
             txh2 = sign_and_send(w3, tx2, PRIVATE_KEY)
-            rcpt2 = w3.eth.wait_for_transaction_receipt(txh2, timeout=180)
+            rcpt2 = w3.eth.wait_for_transaction_receipt(txh2)
             if rcpt2.status != 1:
                 raise SystemExit("❌ Forwarding failed.")
             print(f"✅ Forward successful: {txh2.hex()}")
