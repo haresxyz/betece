@@ -68,7 +68,7 @@ def main():
     TOKEN_IN_RAW  = os.getenv("TOKEN_IN")
     TOKEN_OUT_RAW = os.getenv("TOKEN_OUT")
     SLIP_STR      = os.getenv("SLIPPAGE_PERCENT")
-    AMOUNT_IN_STR = os.getenv("AMOUNT_IN")             # daily/base amount
+    AMOUNT_IN_STR = os.getenv("AMOUNT_IN")  # daily/base amount
 
     if not RPC_URL:       raise SystemExit("❌ Missing RPC_URL")
     if not PRIVATE_KEY:   raise SystemExit("❌ Missing PRIVATE_KEY")
@@ -78,15 +78,15 @@ def main():
     if not SLIP_STR:      raise SystemExit("❌ Missing SLIPPAGE_PERCENT")
     if not AMOUNT_IN_STR: raise SystemExit("❌ Missing AMOUNT_IN")
 
-    WALLET        = Web3.to_checksum_address(WALLET_RAW)
-    TOKEN_IN_ADDR = Web3.to_checksum_address(TOKEN_IN_RAW)
-    TOKEN_OUT_ADDR= Web3.to_checksum_address(TOKEN_OUT_RAW)
-    SLIPPAGE_PCT  = Decimal(SLIP_STR)
-    AMOUNT_IN     = Decimal(AMOUNT_IN_STR)
+    WALLET         = Web3.to_checksum_address(WALLET_RAW)
+    TOKEN_IN_ADDR  = Web3.to_checksum_address(TOKEN_IN_RAW)
+    TOKEN_OUT_ADDR = Web3.to_checksum_address(TOKEN_OUT_RAW)
+    SLIPPAGE_PCT   = Decimal(SLIP_STR)
+    AMOUNT_IN      = Decimal(AMOUNT_IN_STR)
 
     # === Friday amount override only (optional) ===
     is_friday = (datetime.utcnow().weekday() == 4)  # 0=Mon ... 4=Fri ... 6=Sun
-    amount_fri_str = os.getenv("AMOUNT_IN_FRIDAY")  # not declared in YAML; read if secret exists
+    amount_fri_str = os.getenv("AMOUNT_IN_FRIDAY")  # will be used if present
     amount_eff = Decimal(amount_fri_str) if (is_friday and amount_fri_str) else AMOUNT_IN
     print(f"[Mode] {'Friday' if is_friday else 'Daily'} run → Amount={amount_eff}, Slippage={SLIPPAGE_PCT}")
 
@@ -147,7 +147,7 @@ def main():
         except Exception:
             approve_tx["gas"] = 120000
         txh = sign_and_send(w3, approve_tx, PRIVATE_KEY)
-        rcpt = w3.eth.wait_for_transaction_receipt(txh)
+        rcpt = w3.eth.wait_for_transaction_receipt(txh, timeout=180)
         if rcpt.status != 1:
             raise SystemExit("❌ Approval failed.")
         print(f"✅ Approval successful: {txh.hex()}")
@@ -176,7 +176,7 @@ def main():
 
     print("🔄 Sending swap transaction...")
     txh_swap = sign_and_send(w3, swap_tx, PRIVATE_KEY)
-    rcpt_swap = w3.eth.wait_for_transaction_receipt(txh_swap)
+    rcpt_swap = w3.eth.wait_for_transaction_receipt(txh_swap, timeout=300)
     if rcpt_swap.status != 1:
         raise SystemExit("❌ Swap failed.")
 
@@ -206,7 +206,7 @@ def main():
             except Exception:
                 tx2["gas"] = 120000
             txh2 = sign_and_send(w3, tx2, PRIVATE_KEY)
-            rcpt2 = w3.eth.wait_for_transaction_receipt(txh2)
+            rcpt2 = w3.eth.wait_for_transaction_receipt(txh2, timeout=180)
             if rcpt2.status != 1:
                 raise SystemExit("❌ Forwarding failed.")
             print(f"✅ Forward successful: {txh2.hex()}")
